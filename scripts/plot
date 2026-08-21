@@ -1,0 +1,38 @@
+set term postscript dashed color
+set term postscript eps
+ set output 'tc_ldelay.eps'
+ set xlabel 'Time (Seconds)'
+ set ylabel 'Queue Delay (ms)'
+ set xrange [0:100]
+ set xtics 0,10,100
+ set yrange [0:*]
+plot 'fq_codel_ldelay.dat' using 1:($2/1000) title 'fq_codel' with lines lt rgbcolor 'red', \
+     'fq_codelpp_ldelay.dat' using 1:($2/1000) title 'fq_codel++' with lines lt rgbcolor 'blue'
+set output
+
+set term postscript dashed color
+set term postscript eps
+ set output 'tc_drop_next.eps'
+ set xlabel 'Time (Seconds)'
+ set ylabel 'Drop\_next (ms)'
+ set xrange [0:100]
+ set xtics 0,10,100
+ set yrange [0:*]
+#set ytics 20
+plot 'fq_codel_drop_next.dat' using 1:2 title 'fq_codel' with lines lt rgbcolor 'red', 'fq_codelpp_drop_next.dat' using 1:2 title 'fq_codel++' with lines lt rgbcolor 'blue'
+#plot 'fq_codelpp_drop_next.dat' using 1:2 title 'fq_codel++' with lines lt rgbcolor "red"
+set output
+
+#Receiver_throughput
+set term postscript dashed color
+set term postscript eps
+ set output 'Throughput.eps'
+ set xlabel 'Time (Seconds)'
+ set ylabel 'Throughput (Mbps)'
+ set xrange [0:100]
+ set xtics 0,10,100
+ set yrange [0:*]
+# set ytics 6,8,22
+plot 'fq_codel_netperf_receiver.dat' using 1:2 title 'fq_codel' with lines lt rgbcolor 'red', 'fq_codelpp_netperf_receiver.dat' using 1:2 title 'fq_codel++' with lines lt rgbcolor 'blue'
+#plot 'fq_codelpp_netperf.dat' using 1:2 title 'fq_codelpp_fq_codel' with lines lt rgbcolor "red"
+set output
