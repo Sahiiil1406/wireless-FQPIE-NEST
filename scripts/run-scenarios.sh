@@ -36,8 +36,8 @@ if [[ ! -f "$SCRIPT" ]]; then
 fi
 
 RESULTS_DIR="results"
-#QDISCS=("fq_codel" "codel")
-QDISCS=("fq_codel")
+#QDISCS=("fq_codel" "codel","fq_pie")
+QDISCS=("fq_pie")
 #SCENARIOS=("synchronous" "staggered" "pulsewave" "rtt-fairness" "udp-background")
 SCENARIOS=("synchronous")
 
@@ -49,7 +49,8 @@ UDP_RATE="100mbit"
 # only the start-time behaviour differs between them; "rtt-fairness" keeps
 # a synchronous start but gives each TCP flow a different RTT.
 declare -A SCENARIO_ARGS=(
-    [synchronous]="-n 100 --start-gap 0"
+    #[synchronous]="-n 100 --start-gap 0"
+    [synchronous]="-n 20 --start-gap 0"
     #[staggered]="-n 100 --start-gap 100"
     #[pulsewave]="-n 100 --start-gap 0 --pulsebw --high-bw 100mbit --low-bw 50mbit --pulse-interval 10"
     #[rtt-fairness]="-n 100 --start-gap 0 --tcp-rtts 20,20,20,30,40,40,40,50,60,60,60,70,80,90,100,100,100,110,120,120,130,140,150,160,170,180,190,200,200,200,210,210,220,220,230,230,240,240,250,250,250,260,260,270,270,280,280,290,300,300,300,310,320,320,330,340,340,350,360,360,370,380,390,400,400,400,410,420,420,430,440,450,460,470,480,490,500,500,510,520,530,540,540,550,560,560,560,570,580,590,600,610,620,630,640,650,660,680,700,720 --udp-rtts 40"  

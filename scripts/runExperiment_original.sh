@@ -13,12 +13,12 @@ do
     sudo ip -all netns delete 2>/dev/null || true
     sudo pkill -f netperf 2>/dev/null || true
     sudo pkill -f iperf3 2>/dev/null || true
-    OUTPUT_FOLDER="fq_codel_dat_files"
+    OUTPUT_FOLDER="fq_pie_dat_files"
     if [[ ! -d $OUTPUT_FOLDER ]]; then
         mkdir "$OUTPUT_FOLDER"
         echo "Created folder: $OUTPUT_FOLDER"
     fi
-    cd /home/deepa/nest/fq_codel_dat_files
+    cd /home/deepa/nest/fq_pie_dat_files
     Netperf_folder="netperf_sender"
     if [[ ! -d $Netperf_folder ]]; then
         mkdir "$Netperf_folder"
@@ -38,26 +38,26 @@ do
     fi
 
     sudo chmod 777 /home/deepa/nest/results
-    cd /home/deepa/nest/results/synchronous/fq_codel
-    #cd /home/deepa/nest/results/staggered/fq_codel
-    #cd /home/deepa/nest/results/rtt-fairness/fq_codel
-    #cd /home/deepa/nest/results/pulsewave/fq_codel
-    #cd /home/deepa/nest/results/udp-background/fq_codel
+    cd /home/deepa/nest/results/synchronous/fq_pie
+    #cd /home/deepa/nest/results/staggered/fq_pie
+    #cd /home/deepa/nest/results/rtt-fairness/fq_pie
+    #cd /home/deepa/nest/results/pulsewave/fq_pie
+    #cd /home/deepa/nest/results/udp-background/fq_pie
 
     OUTPUT_DIR=$(ls -dt synchronous_*dump | head -n 1)
     #OUTPUT_DIR=$(ls -dt staggered_*dump | head -n 1)
     #OUTPUT_DIR=$(ls -dt rtt-fairness_*dump | head -n 1)
     #OUTPUT_DIR=$(ls -dt pulsewave_*dump | head -n 1)
     #OUTPUT_DIR=$(ls -dt udp-background_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt fq_codel_$i | head -n 1)
+    #OUTPUT_DIR=$(ls -dt fq_pie_$i | head -n 1)
 
     # Rename the directory to 'modified_i' where i is the iteration number
     if [[ -d $OUTPUT_DIR ]]; then
-        RENAMED_DIR="/home/deepa/nest/results/synchronous/fq_codel/fq_codel_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/staggered/fq_codel/fq_codel_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/rtt-fairness/fq_codel/fq_codel_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/pulsewave/fq_codel/fq_codel_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/udp-background/fq_codel/fq_codel_$i"
+        RENAMED_DIR="/home/deepa/nest/results/synchronous/fq_pie/fq_pie_$i"
+        #RENAMED_DIR="/home/deepa/nest/results/staggered/fq_pie/fq_pie_$i"
+        #RENAMED_DIR="/home/deepa/nest/results/rtt-fairness/fq_pie/fq_pie_$i"
+        #RENAMED_DIR="/home/deepa/nest/results/pulsewave/fq_pie/fq_pie_$i"
+        #RENAMED_DIR="/home/deepa/nest/results/udp-background/fq_pie/fq_pie_$i"
 
         sudo mv "$OUTPUT_DIR" "$RENAMED_DIR"
         echo "Renamed directory $OUTPUT_DIR to $RENAMED_DIR"
@@ -114,7 +114,7 @@ do
     echo "Cooling down for ${COOLDOWN_SEC}s..."
     sleep "$COOLDOWN_SEC"
 done
-cd /home/deepa/nest/fq_codel_dat_files
+cd /home/deepa/nest/fq_pie_dat_files
 # Create folders for KEYS (SS files)
 for KEY in "${KEYS[@]}"; do
     mkdir -p "$KEY"  # Create folder if it doesn't exist
@@ -154,7 +154,7 @@ cd /home/deepa/nest/
 # Create the comparison directory if it doesn't exist
 
 mkdir -p comparison
-FOLDER_PATH="/home/deepa/nest/fq_codel_dat_files"
+FOLDER_PATH="/home/deepa/nest/fq_pie_dat_files"
 
 # Find all subdirectories in FOLDER_PATH and process them
 find "$FOLDER_PATH" -type d | while read -r SUBDIR; do
@@ -162,7 +162,7 @@ find "$FOLDER_PATH" -type d | while read -r SUBDIR; do
     BASENAME=$(basename "$SUBDIR")
 
     # Construct the output file name
-    OUTPUT_FILE="./comparison/fq_codel_${BASENAME}.dat"
+    OUTPUT_FILE="./comparison/fq_pie_${BASENAME}.dat"
 
     rm $OUTPUT_FILE
 

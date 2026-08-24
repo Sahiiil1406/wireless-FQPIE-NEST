@@ -1,0 +1,4 @@
+nest/.venv
+nest/fq-pie*
+.venv
+test_scenario

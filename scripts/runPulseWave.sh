@@ -34,7 +34,7 @@ if [[ ! -f "$SCRIPT" ]]; then
 fi
 
 RESULTS_DIR="results"
-QDISCS=("fq_codel")
+QDISCS=("fq_pie")
 SCENARIOS=("pulsewave")
 
 # Settings shared by every scenario

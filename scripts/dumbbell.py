@@ -100,9 +100,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--qdisc", type=str, default="fq_codel",
-        choices=["fq_codel", "codel", "pie", "red", "pfifo"],
-        help="Queuing discipline to install on the bottleneck link (default: fq_codel)",
+        "--qdisc", type=str, default="fq_pie",
+        choices=["fq_codel", "codel", "pie", "fq_pie", "red", "pfifo"],
+        help="Queuing discipline to install on the bottleneck link (default: fq_pie)",
     )
     parser.add_argument(
         "--qdisc-params", type=str, default=None,
@@ -154,6 +154,14 @@ DEFAULT_QDISC_PARAMS = {
         "limit": "100",
         "target": "2ms",
         "tupdate": "15ms",
+    },
+    "fq_pie": {
+        "limit": "100",
+        "flows": "1024",
+        "target": "15ms",
+        "tupdate": "15ms",
+        "alpha": "2",
+        "beta": "20",
     },
     "red": {
         "limit": "100",

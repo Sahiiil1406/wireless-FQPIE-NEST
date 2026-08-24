@@ -1930,7 +1930,7 @@ if __name__ == "__main__":
         if subfolder_name.lower() == "comparison":
             algos_to_compare = [
                 #[("fqcodel", "FQ-CoDel"), ("fqcodelpp", "FQ-CoDel++")],
-                [("fq_codel", "FQ-CoDel"), ("fq_codelpp", "FQ-CoDel++")],
+                [("fq_pie", "FQ-PIE")],
                 #[("fqpie", "FQ-PIE"), ("fqpieBulk", "FQ-PIE_NoBulkDrop")],
                 #[("fq", "FQ-CoDel"), ("fqcodelpp", "FQ-CoDel++")],
                 #[("fqcodel", "FQ-CoDel"), ("fqcodelnodb", "FQ-CoDel (No Drop batch)")],
@@ -2004,7 +2004,6 @@ if __name__ == "__main__":
             # compare_flows(subfolder_path + "/fqpdrop_fqpie.dat",subfolder_path + "/fqpdrop_fqpienodb.dat", plot_dir + "/fqpdrop_fqpie.png", None, "PDrop", ("FQ-PIE","FQ-PIE (No Drop Batch)"), "Per Flow Pdrop Value")
             # compare_flows(subfolder_path + "/fqqdelay_fqpie.dat",subfolder_path + "/fqqdelay_fqpienodb.dat", plot_dir + "/fqqdelay_fqpie.png", None, "Queue Delay (ms)", ("FQ-PIE", "FQ-PIE (No Drop Batch)"))
         else:      
-            continue  
             plots_to_generate = single_plots
             
         generate_plots(subfolder_path, plot_dir, plots_to_generate, regions)
