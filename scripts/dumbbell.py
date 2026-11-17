@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 import threading
+import time
 
 
 from nest.topology import *
@@ -24,7 +25,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "-n", "--tcp-flows", type=int, default=10,
+        "-n", "--tcp-flows", type=int, default=100,
         help="Number of TCP flows",
     )
     parser.add_argument(
@@ -100,9 +101,13 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--qdisc", type=str, default="fq_codel",
-        choices=["fq_codel", "codel", "pie", "red", "pfifo"],
-        help="Queuing discipline to install on the bottleneck link (default: fq_codel)",
+        "--qdisc", type=str, default="fq_pie",
+        choices=["fq_codel", "codel", "pie", "red", "pfifo", "fq_pie"],
+        help="Queuing discipline to install on the bottleneck link (default: fq_pie)",
+    )
+    parser.add_argument(
+        "--congestion", type=str, default="cubic",
+        help="TCP congestion control algorithm for all TCP flows (default: cubic)",
     )
     parser.add_argument(
         "--qdisc-params", type=str, default=None,
@@ -116,6 +121,14 @@ def parse_args():
     parser.add_argument(
         "--experiment-name", type=str, default="dumbbell",
         help="Name used for the experiment / output dump directory",
+    )
+    parser.add_argument(
+        "--no-nest-plots", action="store_true", default=False,
+        help=(
+            "Skip NeST's own per-run matplotlib/gnuplot figures. The raw JSON "
+            "dumps are still written; use this for large sweeps (the FQ-PIE "
+            "evaluation suite generates its own plots)."
+        ),
     )
 
     return parser.parse_args()
@@ -142,7 +155,7 @@ DEFAULT_QDISC_PARAMS = {
     "fq_codel": {
         "flows": "1024",
         "target": "5ms",
-        "interval": "100ms", 
+        "interval": "100ms",
         "ecn": " ",
     },
     "codel": {
@@ -153,6 +166,13 @@ DEFAULT_QDISC_PARAMS = {
     "pie": {
         "limit": "100",
         "target": "2ms",
+        "tupdate": "15ms",
+    },
+    "fq_pie": {
+        # Kernel defaults (man tc-fq_pie): limit 10240 packets, flows 1024, target 15ms, tupdate 15ms
+        "limit": "10240",
+        "flows": "1024",
+        "target": "15ms",
         "tupdate": "15ms",
     },
     "red": {
@@ -228,6 +248,18 @@ def start_pulse_wave(interface, high_bw, low_bw, interval, duration):
 
 def main():
     args = parse_args()
+
+    if getattr(args, "no_nest_plots", False):
+        # Plotting hundreds of per-interface figures dominates wall time on
+        # 100-flow runs. The JSON dumps (which the evaluation reads) are
+        # unaffected, so skip them unless explicitly requested.
+        try:
+            from nest import config as nest_config
+            nest_config.set_value("plot_results", False)
+            nest_config.set_value("enable_matplot", False)
+            nest_config.set_value("enable_gnuplot", False)
+        except Exception as exc:  # pragma: no cover - best effort
+            print(f"Could not disable NeST plots: {exc}", file=sys.stderr)
 
     n_tcp = args.tcp_flows
     k_udp = args.udp_flows
@@ -342,7 +374,11 @@ def main():
     exp = Experiment(args.experiment_name)
 
     for flow, _start_time in tcp_flows_info:
-        exp.add_tcp_flow(flow,tool="iperf3")
+        exp.add_tcp_flow(
+            flow,
+            congestion_algorithm=args.congestion,
+            tool="iperf3",
+        )
 
     for flow, _start_time, target_bandwidth in udp_flows_info:
         exp.add_udp_flow(flow, target_bandwidth=target_bandwidth)

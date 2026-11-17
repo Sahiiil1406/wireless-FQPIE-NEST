@@ -84,9 +84,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--qdisc", type=str, default="fq_codel",
-        choices=["fq_codel", "codel", "pie", "red", "pfifo"],
-        help="Queuing discipline to install on bottleneck (default: fq_codel)",
+        "--qdisc", type=str, default="fq_pie",
+        choices=["fq_codel", "codel", "pie", "red", "pfifo", "fq_pie"],
+        help="Queuing discipline to install on bottleneck (default: fq_pie)",
     )
     parser.add_argument(
         "--qdisc-params", type=str, default=None,
@@ -115,18 +115,24 @@ DEFAULT_QDISC_PARAMS = {
     "fq_codel": {
         "flows": "1024",
         "target": "5ms",
-        "interval": "100ms", 
+        "interval": "100ms",
         "ecn": " ",
     },
     "codel": {
         "limit": "1000",
         "target": "5ms",
         "interval": "100ms",
-       # "pp": " ",
     },
     "pie": {
         "limit": "100",
         "target": "2ms",
+        "tupdate": "15ms",
+    },
+    "fq_pie": {
+        # Kernel defaults (man tc-fq_pie): limit 10240 packets, flows 1024, target 15ms, tupdate 15ms
+        "limit": "10240",
+        "flows": "1024",
+        "target": "15ms",
         "tupdate": "15ms",
     },
     "red": {

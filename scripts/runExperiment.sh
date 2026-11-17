@@ -2,80 +2,164 @@
 KEYS=("cwnd" "rtt" "dev_rtt" "ssthresh" "rto" "delivery_rate" "pacing_rate")
 KEYS1=("bytes" "packets" "drops" "overlimits" "requeues" "backlog" "qlen" "count" "lastcount" "ldelay" "drop_next" "maxpacket" "drop_overlimit")
 COOLDOWN_SEC=3
-# Run the experiment 5 times
-for i in {1..25}
+# Auto-detect NEST_DIR from script location (portable, replaces hardcoded /home/deepa/nest)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NEST_DIR="$PROJECT_ROOT/nest"
+# NeST venv python (fixes ModuleNotFoundError under sudo)
+NEST_PYTHON="$NEST_DIR/.venv/bin/python"
+if [[ ! -x "$NEST_PYTHON" ]]; then NEST_PYTHON="python3"; fi
+# Use venv python via PYTHON_BIN for run-scenarios.sh
+export NEST_PYTHON
+export PYTHON_BIN="$NEST_PYTHON"
+# Allow target override from env, e.g. QDISC_PARAMS='{"target":"5ms"}' sudo -E bash runExperiment.sh
+QDISC_PARAMS="${QDISC_PARAMS:-}"
+export QDISC_PARAMS
+
+# Resume support (eg 20 done -> restart from 21 without losing progress):
+#   RESUME=1 (default) skips iterations already completed (fq_pie_$i + dats exist).
+#   START_ITER/END_ITER override the loop range, e.g. START_ITER=21 sudo -E bash runExperiment.sh
+#   RESUME=0 forces a full re-run from scratch (old behaviour).
+#   Examples:
+#     sudo -E bash scripts/runExperiment.sh                      # auto-resume 1..25
+#     START_ITER=21 sudo -E bash scripts/runExperiment.sh        # manual: run 21..25 only
+#     RESUME=0 sudo -E bash scripts/runExperiment.sh             # wipe + redo all 25
+START_ITER="${START_ITER:-1}"
+END_ITER="${END_ITER:-25}"
+RESUME="${RESUME:-1}"
+export START_ITER END_ITER RESUME
+
+# Run the experiment 25 times (fq_pie with defaults)
+for i in $(seq "$START_ITER" "$END_ITER")
 do
-    echo "Running experiment iteration $i..."
-    
-    #sudo ~/venv/bin/python3 fq_codel-point-to-point.py
-    cd /home/deepa/nest/
-    #sudo bash -c "ulimit -n 65535 && echo -n 'Active Open File Limit: ' && ulimit -n"
-    #sudo env "PATH=$PATH" ./run-scenarios.sh dumbbell.py
-    sudo bash -c "ulimit -n 65535 && env "PATH=$PATH" ./run-scenarios.sh dumbbell.py"
-    #sudo bash -c "ulimit -n 65535 && env "PATH=$PATH" ./runPulseWave.sh pulseWave.py"
+    echo "Running experiment iteration $i... (RESUME=$RESUME)"
+
+    # --- Resume check: skip if this iteration already has results + dats ---
+    if [[ "$RESUME" == "1" ]]; then
+        EXISTING=""
+        [[ -d "$PROJECT_ROOT/results/synchronous/fq_pie/fq_pie_$i" ]] && EXISTING="$PROJECT_ROOT/results/synchronous/fq_pie/fq_pie_$i"
+        [[ -z "$EXISTING" && -d "$NEST_DIR/results/synchronous/fq_pie/fq_pie_$i" ]] && EXISTING="$NEST_DIR/results/synchronous/fq_pie/fq_pie_$i"
+        if [[ -n "$EXISTING" && -f "$NEST_DIR/fq_pie_dat_files/netperf_sender/netperf${i}.dat" && -f "$NEST_DIR/fq_pie_dat_files/netperf_receiver/iperf3Server${i}.dat" ]]; then
+            echo "Iteration $i already done ($EXISTING + dats exist), skipping (RESUME=1). Use RESUME=0 to force re-run."
+            continue
+        fi
+        # Reuse existing renamed dir without re-running NeST if dats are missing
+        # (falls through to extraction below via REUSE_DIR)
+        REUSE_DIR="$EXISTING"
+    else
+        REUSE_DIR=""
+    fi
+
+    OUTPUT_FOLDER="fq_pie_dat_files"
+    mkdir -p "$NEST_DIR/$OUTPUT_FOLDER" 2>/dev/null || true
+    chmod 777 "$NEST_DIR/$OUTPUT_FOLDER" 2>/dev/null || true
+
+    # If resuming and renamed dir already exists but dats are missing -> re-extract only, no re-run
+    if [[ "$RESUME" == "1" && -n "${REUSE_DIR:-}" && -d "$REUSE_DIR" ]]; then
+        if [[ ! -f "$NEST_DIR/$OUTPUT_FOLDER/netperf_sender/netperf${i}.dat" ]]; then
+            echo "Reusing existing $REUSE_DIR without re-running NeST (re-extracting dats)..."
+            RENAMED_DIR="$REUSE_DIR"
+            cd "$NEST_DIR"
+            OUTPUT_FOLDER="fq_pie_dat_files"
+            mkdir -p "$OUTPUT_FOLDER"
+            chmod 777 "$OUTPUT_FOLDER"
+            cd "$NEST_DIR/fq_pie_dat_files"
+            mkdir -p netperf_sender ping netperf_receiver
+            # Process sending_rate from iperf3.json
+            JSON_INPUT="${RENAMED_DIR}/iperf3.json"
+            DAT_OUTPUT="${OUTPUT_FOLDER}/netperf_sender/netperf${i}.dat"
+            [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k sending_rate
+
+            # Process receiving_rate from iperfServer.json
+            JSON_INPUT="${RENAMED_DIR}/iperf3Server.json"
+            DAT_OUTPUT="${OUTPUT_FOLDER}/netperf_receiver/iperf3Server${i}.dat"
+            [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k receiving_rate
+
+            # Process rtt from ping.json
+            JSON_INPUT="${RENAMED_DIR}/ping.json"
+            DAT_OUTPUT="${OUTPUT_FOLDER}/ping/ping${i}.dat"
+            [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k rtt
+
+            for KEY in "${KEYS[@]}"; do
+                JSON_INPUT="${RENAMED_DIR}/ss.json"
+                DAT_OUTPUT="${OUTPUT_FOLDER}/ss_${KEY}${i}.dat"
+                [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/SS_TC.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY"
+            done
+
+            for KEY1 in "${KEYS1[@]}"; do
+                JSON_INPUT="${RENAMED_DIR}/tc.json"
+                DAT_OUTPUT="${OUTPUT_FOLDER}/tc_${KEY1}${i}.dat"
+                [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/SS_TC.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY1"
+            done
+            echo "Iteration $i re-extracted from $REUSE_DIR."
+            echo "-----------------------------------"
+            echo "Cooling down for ${COOLDOWN_SEC}s..."
+            sleep "$COOLDOWN_SEC"
+            continue
+        fi
+    fi
+
+    cd "$NEST_DIR"
+    # NOTE: QDISC_PARAMS (JSON with double quotes) is passed via outer sudo env only.
+    # It is inherited inside bash -c; repeating it quoted inside would break JSON parsing.
+    sudo env "PATH=$PATH" "NEST_PYTHON=$NEST_PYTHON" "PYTHON_BIN=$NEST_PYTHON" "QDISC_PARAMS=$QDISC_PARAMS" bash -c 'ulimit -n 65535 && exec env "PATH=$PATH" "NEST_PYTHON=$NEST_PYTHON" "PYTHON_BIN=$PYTHON_BIN" ./../scripts/run-scenarios.sh ./../scripts/dumbbell.py'
     # Explicitly clean up any orphan NeST namespaces/processes between runs
     sudo ip -all netns delete 2>/dev/null || true
     sudo pkill -f netperf 2>/dev/null || true
     sudo pkill -f iperf3 2>/dev/null || true
-    OUTPUT_FOLDER="fq_codelpp_dat_files"
+    OUTPUT_FOLDER="fq_pie_dat_files"
     mkdir -p "$OUTPUT_FOLDER"
     chmod 777 "$OUTPUT_FOLDER"
-    cd /home/deepa/nest/fq_codelpp_dat_files
+    cd "$NEST_DIR/fq_pie_dat_files"
     mkdir -p netperf_sender ping netperf_receiver
 
-    sudo chmod 777 /home/deepa/nest/results
-    cd /home/deepa/nest/results/synchronous/fq_codel
-    #cd /home/deepa/nest/results/staggered/fq_codel
-    #cd /home/deepa/nest/results/rtt-fairness/fq_codel
-    #cd /home/deepa/nest/results/pulsewave/fq_codel
-    #cd /home/deepa/nest/results/udp-background/fq_codel
+    sudo chmod 777 "$NEST_DIR/results" 2>/dev/null || true
+    sudo chmod 777 "$PROJECT_ROOT/results" 2>/dev/null || true
+    # Handle both nest/results and project/results (symlinked)
+    if [[ -d "$PROJECT_ROOT/results/synchronous/fq_pie" ]]; then
+        cd "$PROJECT_ROOT/results/synchronous/fq_pie"
+    else
+        cd "$NEST_DIR/results/synchronous/fq_pie"
+    fi
 
-    OUTPUT_DIR=$(ls -dt synchronous_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt staggered_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt rtt-fairness_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt pulsewave_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt udp-background_*dump | head -n 1)
-    #OUTPUT_DIR=$(ls -dt fq_codelpp_$i | head -n 1)
-
+    OUTPUT_DIR=$(ls -dt synchronous_*dump 2>/dev/null | head -n 1)
 
     if [[ -d $OUTPUT_DIR ]]; then
-        #RENAMED_DIR="fq_codelpp_$i"
-        RENAMED_DIR="/home/deepa/nest/results/synchronous/fq_codel/fq_codelpp_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/staggered/fq_codel/fq_codelpp_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/rtt-fairness/fq_codel/fq_codelpp_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/pulsewave/fq_codel/fq_codelpp_$i"
-        #RENAMED_DIR="/home/deepa/nest/results/udp-background/fq_codel/fq_codelpp_$i"
+        if [[ -d "$PROJECT_ROOT/results/synchronous/fq_pie" ]]; then
+            RENAMED_DIR="$PROJECT_ROOT/results/synchronous/fq_pie/fq_pie_$i"
+        else
+            RENAMED_DIR="$NEST_DIR/results/synchronous/fq_pie/fq_pie_$i"
+        fi
 
-        #rm -rf $RENAMED_DIR
+        sudo rm -rf "$RENAMED_DIR" 2>/dev/null || true
         sudo mv "$OUTPUT_DIR" "$RENAMED_DIR"
         echo "Renamed directory $OUTPUT_DIR to $RENAMED_DIR"
-        cd /home/deepa/nest
+        cd "$NEST_DIR"
         # Process sending_rate from iperf3.json
         JSON_INPUT="${RENAMED_DIR}/iperf3.json"
-        #JSON_INPUT="${RENAMED_DIR}/netperf.json"
         DAT_OUTPUT="${OUTPUT_FOLDER}/netperf_sender/netperf${i}.dat"
-        [[ -f $JSON_INPUT ]] && ./netperf_ping.py -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k sending_rate
+        [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k sending_rate
 
         # Process receiving_rate from iperfServer.json
         JSON_INPUT="${RENAMED_DIR}/iperf3Server.json"
         DAT_OUTPUT="${OUTPUT_FOLDER}/netperf_receiver/iperf3Server${i}.dat"
-        [[ -f $JSON_INPUT ]] && ./netperf_ping.py -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k receiving_rate
+        [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k receiving_rate
 
         # Process rtt from ping.json
         JSON_INPUT="${RENAMED_DIR}/ping.json"
         DAT_OUTPUT="${OUTPUT_FOLDER}/ping/ping${i}.dat"
-        [[ -f $JSON_INPUT ]] && ./netperf_ping.py -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k rtt
+        [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/netperf_ping.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k rtt
 
         for KEY in "${KEYS[@]}"; do
             JSON_INPUT="${RENAMED_DIR}/ss.json"
             DAT_OUTPUT="${OUTPUT_FOLDER}/ss_${KEY}${i}.dat"
-            [[ -f $JSON_INPUT ]] && ./SS_TC.py -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY"
+            [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/SS_TC.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY"
         done
 
         for KEY1 in "${KEYS1[@]}"; do
             JSON_INPUT="${RENAMED_DIR}/tc.json"
             DAT_OUTPUT="${OUTPUT_FOLDER}/tc_${KEY1}${i}.dat"
-            [[ -f $JSON_INPUT ]] && ./SS_TC.py -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY1"
+            [[ -f $JSON_INPUT ]] && "$NEST_PYTHON" "$SCRIPT_DIR/SS_TC.py" -i "$JSON_INPUT" -o "$DAT_OUTPUT" -k "$KEY1"
         done
     else
         echo "Output directory not found!"
@@ -87,7 +171,7 @@ do
     sleep "$COOLDOWN_SEC"
 done
 
-cd /home/deepa/nest/fq_codelpp_dat_files
+cd "$NEST_DIR/fq_pie_dat_files"
 # Create folders for KEYS (SS files)
 for KEY in "${KEYS[@]}"; do
     mkdir -p "$KEY"  # Create folder if it doesn't exist
@@ -114,7 +198,7 @@ for KEY1 in "${KEYS1[@]}"; do
     echo "Looking for files matching pattern *tc_${KEY1}*.dat"
     if ls *"tc_${KEY1}"*.dat 1>/dev/null 2>&1; then
         mv *"tc_${KEY1}"*.dat "$KEY1/"
-        echo "Moved *tc_${KEY}*.dat files to $KEY/"
+        echo "Moved *tc_${KEY1}*.dat files to $KEY/"
     else
         echo "No files found for key: $KEY"
     fi
@@ -124,13 +208,13 @@ echo "Files have been organized into folders by keys."
 echo "All iterations completed."
 
 # Ensure the working directory is correct
-cd /home/deepa/nest
+cd "$NEST_DIR"
 
 # Create the comparison directory if it doesn't exist
 mkdir -p comparison
 
 # Define the folder path containing the nested dat files
-FOLDER_PATH="/home/deepa/nest/fq_codelpp_dat_files"
+FOLDER_PATH="$NEST_DIR/fq_pie_dat_files"
 
 # Find all subdirectories in FOLDER_PATH and process them
 find "$FOLDER_PATH" -type d | while read -r SUBDIR; do
@@ -138,11 +222,11 @@ find "$FOLDER_PATH" -type d | while read -r SUBDIR; do
     BASENAME=$(basename "$SUBDIR")
 
     # Construct the output file name
-    OUTPUT_FILE="./comparison/fq_codelpp_${BASENAME}.dat"
+    OUTPUT_FILE="./comparison/fq_pie_${BASENAME}.dat"
 
-    rm $OUTPUT_FILE
+    rm -f "$OUTPUT_FILE"
     # Run the averagedat.py script with the directory and output file
-    ./averagedat.py -i "$SUBDIR" -o "$OUTPUT_FILE"
+    "$NEST_PYTHON" "$SCRIPT_DIR/averagedat.py" -i "$SUBDIR" -o "$OUTPUT_FILE"
     # If processing 'ldelay' or 'qdelay', convert column 2 from microseconds (us) to milliseconds (ms)
     if [[ "$BASENAME" == *"ldelay"* || "$BASENAME" == *"qdelay"* ]]; then
         if [ -f "$OUTPUT_FILE" ]; then

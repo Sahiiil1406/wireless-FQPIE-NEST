@@ -28,22 +28,45 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-SCRIPT="${1:-fq-codel-point-to-point-dynamic.py}"
+# Resolve NeST venv python (fixes ModuleNotFoundError under sudo)
+SCRIPT_DIR_RS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT_RS="$(cd "$SCRIPT_DIR_RS/.." && pwd)"
+NEST_DIR_RS="$PROJECT_ROOT_RS/nest"
+VENV_PYTHON="$NEST_DIR_RS/.venv/bin/python"
+if [[ -x "$VENV_PYTHON" ]]; then
+    PYTHON_BIN="${PYTHON_BIN:-$VENV_PYTHON}"
+else
+    PYTHON_BIN="${PYTHON_BIN:-python3}"
+fi
+# Also allow NEST_PYTHON env override (used by runExperiment.sh)
+if [[ -n "${NEST_PYTHON:-}" && -x "$NEST_PYTHON" ]]; then
+    PYTHON_BIN="$NEST_PYTHON"
+fi
+echo "Using Python: $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
+
+SCRIPT="${1:-dumbbell.py}"
 if [[ ! -f "$SCRIPT" ]]; then
     echo "Cannot find the NeST script at '$SCRIPT'." >&2
     echo "Usage: sudo $0 [path-to-script.py]" >&2
     exit 1
 fi
 
-RESULTS_DIR="results"
-#QDISCS=("fq_codel" "codel")
-QDISCS=("fq_codel")
+# Allow caller to override RESULTS_DIR (e.g. /home/sahil/.../results or .../nest/results)
+RESULTS_DIR="${RESULTS_DIR:-results}"
+# Default to fq_pie with kernel lab defaults (limit 100, flows 2, target 15ms)
+QDISCS=("fq_pie")
 #SCENARIOS=("synchronous" "staggered" "pulsewave" "rtt-fairness" "udp-background")
 SCENARIOS=("synchronous")
 
-# Settings shared by every scenario: 3 TCP flows + 1 UDP background flow.
+# Settings shared by every scenario: 100 TCP flows, 0 UDP (as in dumbbell.py defaults)
+# Use FQ-PIE defaults: limit 100, flows 2, target 15ms (override via --qdisc-params if needed)
+# Example custom target: --qdisc-params '{"target":"2ms"}'
 DURATION=100
 UDP_RATE="100mbit"
+# Optional: override FQ-PIE target (leave empty for defaults).
+# Can be passed from env, e.g. QDISC_PARAMS='{"target":"5ms"}' sudo -E ./run-scenarios.sh
+# QDISC_PARAMS='{"target":"15ms"}'  # default
+QDISC_PARAMS="${QDISC_PARAMS:-}"
 
 # Per-scenario overrides. Same RTTs for "synchronous"/"staggered" so that
 # only the start-time behaviour differs between them; "rtt-fairness" keeps
@@ -65,15 +88,25 @@ for scenario in "${SCENARIOS[@]}"; do
         echo "Scenario: $scenario | Qdisc: $qdisc"
         echo "=============================================="
 
-        python3 "$SCRIPT" \
-            --duration "$DURATION" \
-            --udp-rates "$UDP_RATE" \
-            --qdisc "$qdisc" \
-            --experiment-name "$exp_name" \
-            ${SCENARIO_ARGS[$scenario]}
+        if [[ -n "${QDISC_PARAMS}" ]]; then
+            "$PYTHON_BIN" "$SCRIPT" \
+                --duration "$DURATION" \
+                --udp-rates "$UDP_RATE" \
+                --qdisc "$qdisc" \
+                --qdisc-params "$QDISC_PARAMS" \
+                --experiment-name "$exp_name" \
+                ${SCENARIO_ARGS[$scenario]}
+        else
+            "$PYTHON_BIN" "$SCRIPT" \
+                --duration "$DURATION" \
+                --udp-rates "$UDP_RATE" \
+                --qdisc "$qdisc" \
+                --experiment-name "$exp_name" \
+                ${SCENARIO_ARGS[$scenario]}
+        fi
 
         # Locate the dump directory this run just created, e.g.
-        # "synchronous_fq_codel(12-07-2026-21:30:27)_dump"
+        # "synchronous_fq_pie(12-07-2026-21:30:27)_dump"
         dump_dir=$(find . -maxdepth 1 -type d -name "${exp_name}(*)_dump" | sort | tail -n 1)
 
         if [[ -z "$dump_dir" ]]; then

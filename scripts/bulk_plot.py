@@ -16,6 +16,73 @@ import matplotlib.ticker as ticker
 from matplotlib.patches import Ellipse
 import tkinter as tk
 from tkinter import filedialog
+import pathlib
+
+def _safe_makedirs(path):
+    """mkdir with PermissionError fallback to project comparison/plots"""
+    try:
+        os.makedirs(path, exist_ok=True)
+        # test writable by touching
+        test = os.path.join(path, ".write_test")
+        try:
+            with open(test, 'w') as f: f.write("test")
+            os.remove(test)
+        except PermissionError as e:
+            raise PermissionError(e)
+        return path
+    except PermissionError as e:
+        print(f"Permission denied creating {path}: {e} -- trying fallback...", file=sys.stderr)
+        # fallback to project_root/comparison/plots (writable, owned by user)
+        try:
+            script_dir = pathlib.Path(__file__).resolve().parent
+            proj = script_dir.parent
+            # if path is nest/comparison/plots -> fallback proj/comparison/plots
+            # preserve subfolder structure if needed
+            if "comparison" in path:
+                # extract subdir after comparison if any
+                fallback = proj / "comparison" / "plots"
+                # if path included extra subDir (e.g., comparison/plots/subDir), preserve it
+                try:
+                    rel = pathlib.Path(path).resolve().relative_to(pathlib.Path(pathlib.Path(__file__).resolve().parent.parent / "nest" / "comparison"))
+                    # rel is plots or plots/subDir
+                    if str(rel) != ".":
+                        fallback = proj / "comparison" / rel
+                except: pass
+            else:
+                fallback = proj / "comparison" / "plots"
+            fallback.mkdir(parents=True, exist_ok=True)
+            print(f"Using fallback plot dir: {fallback}", file=sys.stderr)
+            print(f"  Hint: to fix permanently: sudo chown -R $USER:$USER {os.path.dirname(path)}", file=sys.stderr)
+            return str(fallback)
+        except Exception as e2:
+            print(f"Fallback also failed: {e2}", file=sys.stderr)
+            # last resort /tmp
+            fallback = pathlib.Path("/tmp") / "wireless-fqpie-plots"
+            fallback.mkdir(parents=True, exist_ok=True)
+            print(f"Using fallback /tmp: {fallback}", file=sys.stderr)
+            return str(fallback)
+
+def _safe_savefig(plt_obj, path, **kwargs):
+    try:
+        plt_obj.savefig(path, **kwargs)
+        return path
+    except PermissionError as e:
+        print(f"Permission denied saving {path}: {e} -- trying fallback...", file=sys.stderr)
+        try:
+            script_dir = pathlib.Path(__file__).resolve().parent
+            proj = script_dir.parent
+            fallback = proj / "comparison" / "plots" / pathlib.Path(path).name
+            fallback.parent.mkdir(parents=True, exist_ok=True)
+            plt_obj.savefig(str(fallback), **kwargs)
+            print(f"Saved fallback to {fallback}", file=sys.stderr)
+            return str(fallback)
+        except Exception as e2:
+            print(f"Fallback save also failed: {e2}", file=sys.stderr)
+            fallback2 = pathlib.Path("/tmp") / "wireless-fqpie-plots" / pathlib.Path(path).name
+            fallback2.parent.mkdir(parents=True, exist_ok=True)
+            plt_obj.savefig(str(fallback2), **kwargs)
+            print(f"Saved fallback to {fallback2}", file=sys.stderr)
+            return str(fallback2)
 
 
 scenerio="load testing "
@@ -1130,7 +1197,15 @@ def plot_series(ax, folder_path, entry, plot_def, color_offset=0, return_data=Fa
             file = entry["file"].replace(".dat", f"_{j}.dat")
             path = os.path.join(folder_path, file)
             if not os.path.exists(path):
-                break
+                # try fallback to project comparison
+                try:
+                    alt = os.path.join(str(pathlib.Path(__file__).resolve().parent.parent / "comparison"), file)
+                    if os.path.exists(alt):
+                        path = alt
+                    else:
+                        break
+                except:
+                    break
             x, y = np.loadtxt(path, unpack=True)
             if not isinstance(y, Iterable):
                 break
@@ -1176,7 +1251,16 @@ def plot_series(ax, folder_path, entry, plot_def, color_offset=0, return_data=Fa
         file = entry["file"]
         path = os.path.join(folder_path, file)
         if not os.path.exists(path):
-            return (None, [], percentile)
+            # fallback to project root comparison (handles permission fallback for plot_fq_pie)
+            try:
+                alt = os.path.join(str(pathlib.Path(__file__).resolve().parent.parent / "comparison"), file)
+                if os.path.exists(alt):
+                    path = alt
+                else:
+                    # also try nested fallback inside plot_dir fallback? already handled
+                    return (None, [], percentile)
+            except:
+                return (None, [], percentile)
         x,y = 0,0
         try:
             x, y = np.loadtxt(path, unpack=True)
@@ -1774,7 +1858,7 @@ def generate_plots(folder_path, plot_dir, plots_to_generate, regions):
             )
 
         if not os.path.exists(outDir):
-            os.makedirs(outDir)
+            outDir = _safe_makedirs(outDir)
 
         # --------------------------------------------------
         # SAVE PNG
@@ -1785,7 +1869,8 @@ def generate_plots(folder_path, plot_dir, plots_to_generate, regions):
             f"{output_name}.png"
         )
 
-        plt.savefig(
+        _safe_savefig(
+            plt,
             png_file,
             format="png",
             bbox_inches="tight",
@@ -1806,7 +1891,8 @@ def generate_plots(folder_path, plot_dir, plots_to_generate, regions):
             f"{output_name}.eps"
         )
 
-        plt.savefig(
+        _safe_savefig(
+            plt,
             eps_file,
             format="eps",
             bbox_inches="tight",
@@ -1910,15 +1996,17 @@ if __name__ == "__main__":
 
     print(f"Plotting in: {parent_dir}")
 
-    # Loop through all subfolders
+    # Loop through all subfolders (skip hidden/venv/docs etc.)
     for subfolder_name in sorted(os.listdir(parent_dir)):
+        if subfolder_name.startswith(".") or subfolder_name in ["__pycache__",".venv","venv","docs","examples","nest.egg-info","utils","plots"]:
+            continue
         subfolder_path = os.path.join(parent_dir, subfolder_name)
         if not os.path.isdir(subfolder_path):
             continue
 
         print(f"\n==> Processing folder: {subfolder_name}")
         plot_dir = os.path.join(subfolder_path, "plots")
-        os.makedirs(plot_dir, exist_ok=True)
+        plot_dir = _safe_makedirs(plot_dir)
         state_path = os.path.join(subfolder_path, "state.dat")
         regions = []
         # try:
@@ -1928,9 +2016,44 @@ if __name__ == "__main__":
 
         # Decide which plot set to run
         if subfolder_name.lower() == "comparison":
-            algos_to_compare = [
-                #[("fqcodel", "FQ-CoDel"), ("fqcodelpp", "FQ-CoDel++")],
-                [("fq_codel", "FQ-CoDel"), ("fq_codelpp", "FQ-CoDel++")],
+            # Check if this is fq_pie single-qdisc run (our workflow) vs legacy fq_codel compare
+            import pathlib
+            has_fq_pie = any(pathlib.Path(subfolder_path).glob("fq_pie_*.dat"))
+            has_fq_codel = any(pathlib.Path(subfolder_path).glob("fq_codel*.dat"))
+            if has_fq_pie and not has_fq_codel:
+                algos_to_compare = [
+                    [("fq_pie", "FQ-PIE")],
+                ]
+                # For single fq_pie, generate 5 key metric plots directly (throughput/queue_delay/packet_loss/fairness/link_utilization)
+                # These match plot_fq_pie.py and runExperiment outputs
+                plots_to_generate = []
+                for _k, _ylabel, _title in [
+                    ("throughput", "Throughput (Mbps)", "FQ-PIE Throughput (avg 25 runs)"),
+                    ("queue_delay", "Queue Delay (ms)", "FQ-PIE Queue Delay"),
+                    ("packet_loss", "Packet Loss (%)", "FQ-PIE Packet Loss"),
+                    ("fairness", "Fairness (Jain Index)", "FQ-PIE Fairness"),
+                    ("link_utilization", "Link Utilization (%)", "FQ-PIE Link Utilization"),
+                ]:
+                    plots_to_generate.append({
+                        "data": [{"file": f"fq_pie_{_k}.dat", "label": "FQ-PIE"}],
+                        "x_label": "Time (s)",
+                        "y_label": _ylabel,
+                        "title": _title,
+                        "label": _k,
+                    })
+                # Also add backlog/qlen etc if present
+                for pdef in cmp_defs:
+                    # keep original cmp_defs but they will be skipped if no matching files (now handled via symlink above)
+                    pass
+                # Generate the 5 and then continue to generic (still skip .git etc.)
+                # We set a flag to skip the default cmp_defs generation for this case
+                generate_plots(subfolder_path, plot_dir, plots_to_generate, regions)
+                print(f"Generated 5 key fq_pie plots in {plot_dir}")
+                continue
+            else:
+                algos_to_compare = [
+                    [("fq_pie", "FQ-PIE")],
+                    #[("fq_codel", "FQ-CoDel"), ("fq_codelpp", "FQ-CoDel++")],
                 #[("fqpie", "FQ-PIE"), ("fqpieBulk", "FQ-PIE_NoBulkDrop")],
                 #[("fq", "FQ-CoDel"), ("fqcodelpp", "FQ-CoDel++")],
                 #[("fqcodel", "FQ-CoDel"), ("fqcodelnodb", "FQ-CoDel (No Drop batch)")],
@@ -1953,6 +2076,29 @@ if __name__ == "__main__":
                 #[("cobaltnoblue", "COBALT (Without BLUE)"), ("cobaltwait", "COBALT Variant 2")],
                 #[("cobaltnoblue", "COBALT (Without BLUE)"), ("codel", "CoDel")],
             ]
+            # Compat: bulk_plot expects qdelay_fq_pie.dat but runExperiment creates fq_pie_qdelay.dat
+            # Create symlinks for fq_pie so both namings work (no nest/ change, only scripts/)
+            try:
+                import pathlib
+                for _f in pathlib.Path(subfolder_path).glob("fq_pie_*.dat"):
+                    _base = _f.name.replace("fq_pie_","").replace(".dat","")
+                    _alt = pathlib.Path(subfolder_path) / f"{_base}_fq_pie.dat"
+                    if not _alt.exists():
+                        try: _alt.symlink_to(_f.name)
+                        except: 
+                            try: 
+                                import shutil; shutil.copy2(_f, _alt)
+                            except: pass
+                # also handle throughput etc: throughput_fq_pie vs fq_pie_throughput
+                for _k in ["throughput","queue_delay","packet_loss","fairness","link_utilization","backlog","qlen","drops","netperf_receiver","netperf_sender"]:
+                    _a = pathlib.Path(subfolder_path) / f"fq_pie_{_k}.dat"
+                    _b = pathlib.Path(subfolder_path) / f"{_k}_fq_pie.dat"
+                    if _a.exists() and not _b.exists():
+                        try: _b.symlink_to(_a.name)
+                        except: pass
+            except Exception as e:
+                print(f"symlink compat failed: {e}")
+
             plots_to_generate = [
                  {
                     "data": [
